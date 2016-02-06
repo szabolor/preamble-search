@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
+#include <math.h>
 
 /*
 Compile command on Intel CPU with POPCNT flag (check the flags at `/proc/cpuinfo`):
@@ -84,6 +85,10 @@ num_type bitmask; // = (0xffffffff >> (32 - bitlen));
 num_type stop_limit; // = 1 << (bitlen - 1);
 int num_type_length;
 
+/*
+  Peak Sidelobe Level:
+  psl(x) = Max[Table[Sum[x[i] * x[i - lag], {i, lag, bitlen}], {lag, 1, bitlen}]]
+*/
 int psl(num_type val) {
   int i, curr, max = -bitlen;
   num_type pon = val >> 1;
@@ -103,31 +108,33 @@ int psl(num_type val) {
   return max;
 }
 
-void print_autocorr(num_type val) {
-  int i;
+/*
+  Merit Factor / Integrated Sidelobe Level (ISL) / score
+    mf(x) = Total[#^2 & /@ Table[Sum[x[i] * x[i - lag], {i, lag, bitlen}], {lag, 1, bitlen}]]
+    defines the "waviness" of the sidelobe
+    the smaller the better
+    only comparable for the same bitlen (? - not sure...)
+  Sort the output with `sort -t $'\t' -k 4,4 -n PSL_3_mf  > PSL_3_mf_sorted_by_mf`
+*/
+void print_autocorr_and_score(num_type val) {
+  int i, curr, sum = 0;
   num_type pon = val >> 1;
   num_type neg = ((~val) & bitmask) >> 1;
 
   printf("[%d", bitlen);
   for (i = 1; i < bitlen; ++i) {
-    //printf("\npos: %08x; neg: %08x; mask: %d", pon, neg, BITMASK);
-    printf(", %d", (int) (BIT_SET_COUNT(neg ^ val)) - (int) BIT_SET_COUNT(pon ^ val));
+    curr = (int) (BIT_SET_COUNT(neg ^ val)) - (int) BIT_SET_COUNT(pon ^ val);
+    sum += curr * curr;
+    printf(", %d", curr);
     pon >>= 1;
     neg >>= 1;
   }
-  printf("]");
+  printf("]\t");
+  // The square sum and its normalized logaritm of the sidelobe
+  printf("%d\t%f", sum, 10.0 * log10((double) sum / (double) (bitlen * bitlen)));
 }
 
 int main(int argc, char *argv[]) {
-  /*
-    Thresholds: 20*np.log10(threshold/32)
-      6: -14.5 dB
-      5: -16.1 dB
-      4: -18.1 dB
-      3: -20.6 dB
-      2: -24.1 dB
-      1: -30.1 dB
-  */
   num_type i, start, stop;
   int curr, threshold;
   char *p;
@@ -180,7 +187,7 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, "  bit length = %d\n", bitlen);
   fprintf(stderr, "  num type length = %d\n", num_type_length - 2);
   fprintf(stderr, 
-          "  (so omit the first (MSB) %d bits from the number representation)\n",
+          "   -> (so omit the first (MSB) %d bits from the number representation)\n",
          ((num_type_length - 2) << 2) - bitlen);
   fprintf(stderr, "  threshold = %d\n", threshold);
   fprintf(stderr, "  start = " NUM_TYPE_FORMAT "\n", num_type_length, start);
@@ -195,7 +202,7 @@ int main(int argc, char *argv[]) {
     
     if (curr <= threshold) {
       printf(NUM_TYPE_FORMAT "\t%d\t", num_type_length, i, curr);
-      print_autocorr(i);
+      print_autocorr_and_score(i);
       printf("\n");
     }
   }
