@@ -6,10 +6,10 @@
 /*
 Compile command on Intel CPU with POPCNT flag (check the flags at `/proc/cpuinfo`):
   `gcc -o search_binary search_binary.c -Wall -mpopcnt -O3 -march=native -mtune=native -DINTEL_POPCNT`
-Or compile without POPCNT (the runtime will be about 20 times longer...):
+Or compile without POPCNT (the runtime will be about 2-3 times longer...):
   `gcc -o search_binary search_binary.c -Wall -O3 -march=native -mtune=native`
 */
-/*
+/* For `./search_binary 32 3 0 -1`
  Performance counter stats for './search_binary':
 
      142411,731942      task-clock (msec)         #    0,999 CPUs utilized          
@@ -27,44 +27,67 @@ Or compile without POPCNT (the runtime will be about 20 times longer...):
      142,491557005 seconds time elapsed
 */
 
-/* set the length of the preables; must be <= 32 (4 bytes) */
-int bitlen;
-unsigned int bitmask; // = (0xffffffff >> (32 - bitlen));
-/* Only test the half of the codespace, because the negated pairs have the
-   same autocorrelation, so fix the first bit to zero!
-   Unfortunately still the reversed sequences remains.
-   (e.g. 0b0101001100001001111110 and 0b0111111001000011001010 have the same
-   autocorrelation) */
-int stop_limit; // = 1 << (bitlen - 1);
+// enable this flag for explicit Intel POPCNT support
+// #define INTEL_POPCNT
 
-/* enable this flag for explicit Intel POPCNT support */
-/* #define INTEL_POPCNT */
+// enable this flag for explicit 32bit support
+// #define WIDTH_32BIT
 
-#ifndef INTEL_POPCNT
-  /* Trick from: http://graphics.stanford.edu/~seander/bithacks.html#ParityLookupTable */
-  #define BIT_SET_COUNT(x) (bit_set_count(x))
+#ifdef WIDTH_32BIT
+  typedef uint32_t num_type;
+  #define NUM_TYPE_FORMAT "%#0*x"
+  #define BIT_MAX_LENGTH 32
+  #define BIT_SATURATED (0xffffffffU)
+  #define POPCNT_FUNC(x) (_mm_popcnt_u32(x))
   static const unsigned char BitsSetTable256[256] = {
     #define B2(n) n,     n+1,     n+1,     n+2
     #define B4(n) B2(n), B2(n+1), B2(n+1), B2(n+2)
     #define B6(n) B4(n), B4(n+1), B4(n+1), B4(n+2)
     B6(0), B6(1), B6(1), B6(2)
   };
-  static inline int bit_set_count(uint32_t v) {
+  static inline int bit_set_count(num_type v) {
     return  BitsSetTable256[v & 0xff] + 
             BitsSetTable256[(v >> 8) & 0xff] + 
             BitsSetTable256[(v >> 16) & 0xff] + 
             BitsSetTable256[v >> 24]; 
   }
 #else
-  #include <nmmintrin.h>
-  #define BIT_SET_COUNT(x) (_mm_popcnt_u32(x))
+  // or use uint64_t with casts at printf %llx
+  typedef long long unsigned int num_type;
+  #define NUM_TYPE_FORMAT "%#0*llx"
+  #define BIT_MAX_LENGTH 64
+  #define BIT_SATURATED (0xffffffffffffffffULL)
+  #define POPCNT_FUNC(x) (_mm_popcnt_u64(x))
+  static inline int bit_set_count(num_type x) {
+    x = x - ((x >> 1) & 0x5555555555555555UL);
+    x = (x & 0x3333333333333333UL) + ((x >> 2) & 0x3333333333333333UL);
+    return (int)((((x + (x >> 4)) & 0xF0F0F0F0F0F0F0FUL) * 0x101010101010101UL) >> 56);
+  }
 #endif
 
+#define STRINGIZE_NX(A) #A
+#define STRINGIZE(A) STRINGIZE_NX(A)
 
-int psl(unsigned int val) {
+#ifdef INTEL_POPCNT
+  #pragma message ("Compiling with Intel POPCNT support and " STRINGIZE(BIT_MAX_LENGTH) " bit length")
+  #include <nmmintrin.h>
+  #define BIT_SET_COUNT(x) POPCNT_FUNC(x)
+#else
+  #pragma message ("Compiling without Intel POPCNT support and " STRINGIZE(BIT_MAX_LENGTH) " bit length")
+  /* Trick from: http://graphics.stanford.edu/~seander/bithacks.html#ParityLookupTable */
+  #define BIT_SET_COUNT(x) (bit_set_count(x))
+#endif
+
+/* set the length of the preables; must be <= 32 (4 bytes) */
+int bitlen;
+num_type bitmask; // = (0xffffffff >> (32 - bitlen));
+num_type stop_limit; // = 1 << (bitlen - 1);
+int num_type_length;
+
+int psl(num_type val) {
   int i, curr, max = -bitlen;
-  unsigned int pon = val >> 1;
-  unsigned int neg = ((~val) & bitmask) >> 1;
+  num_type pon = val >> 1;
+  num_type neg = ((~val) & bitmask) >> 1;
 
   for (i = 1; i < bitlen; ++i) {
     curr = BIT_SET_COUNT(neg ^ val) - BIT_SET_COUNT(pon ^ val);
@@ -80,15 +103,15 @@ int psl(unsigned int val) {
   return max;
 }
 
-void print_autocorr(unsigned int val) {
+void print_autocorr(num_type val) {
   int i;
-  unsigned int pon = val >> 1;
-  unsigned int neg = ((~val) & bitmask) >> 1;
+  num_type pon = val >> 1;
+  num_type neg = ((~val) & bitmask) >> 1;
 
   printf("[%d", bitlen);
   for (i = 1; i < bitlen; ++i) {
     //printf("\npos: %08x; neg: %08x; mask: %d", pon, neg, BITMASK);
-    printf(", %d", BIT_SET_COUNT(neg ^ val) - BIT_SET_COUNT(pon ^ val));
+    printf(", %d", (int) (BIT_SET_COUNT(neg ^ val)) - (int) BIT_SET_COUNT(pon ^ val));
     pon >>= 1;
     neg >>= 1;
   }
@@ -105,39 +128,47 @@ int main(int argc, char *argv[]) {
       2: -24.1 dB
       1: -30.1 dB
   */
-  unsigned int i, start, stop;
+  num_type i, start, stop;
   int curr, threshold;
   char *p;
 
   if (argc != 5) {
-    printf("Usage: `%s <bitlen> <THRESHOLD> <START> <STOP>`\n", argv[0]);
+    fprintf(stderr, "Usage: `%s <bitlen> <THRESHOLD> <START> <STOP>`\n", argv[0]);
     exit(1);
   }
 
   bitlen = (int) strtol(argv[1], &p, 10);
-  if (errno != 0 || *p != '\0' || bitlen < 2 || bitlen > 32) {
-    printf("bitlen error`\n");
+  if (errno != 0 || *p != '\0' || bitlen < 2 || bitlen > BIT_MAX_LENGTH) {
+    fprintf(stderr, "BITLEN error\n");
     exit(1);
   }
 
-  stop_limit = 1 << (bitlen - 1);
-  bitmask = (0xffffffff >> (32 - bitlen));
+  /* Only test the half of the codespace, because the negated pairs have the
+     same autocorrelation, so fix the first bit to zero!
+     Unfortunately still reversed sequences remains.
+     (e.g. 0b0101001100001001111110 and 0b0111111001000011001010 have the same
+     autocorrelation) */
+  stop_limit = 1UL << (bitlen - 1);
+  bitmask = (BIT_SATURATED >> (BIT_MAX_LENGTH - bitlen));
+
+  // Round to hex characters and `+ 2` for the "0x" prefix
+  num_type_length = ((bitlen + 3) >> 2) + 2; 
 
   threshold = (int) strtol(argv[2], &p, 10);
   if (errno != 0 || *p != '\0') {
-    printf("THRESHOLD error`\n");
+    fprintf(stderr, "THRESHOLD error\n");
     exit(1);
   }
 
-  start = (unsigned int) strtoul(argv[3], &p, 10);
+  start = (num_type) strtoll(argv[3], &p, 10);
   if (errno != 0 || *p != '\0') {
-    printf("START error`\n");
+    fprintf(stderr, "START error\n");
     exit(1);
   }
 
-  stop = (unsigned int) strtoul(argv[4], &p, 10);
+  stop = (num_type) strtoll(argv[4], &p, 10);
   if (errno != 0 || *p != '\0') {
-    printf("STOP error`\n");
+    fprintf(stderr, "STOP error\n");
     exit(1);
   }
 
@@ -145,14 +176,25 @@ int main(int argc, char *argv[]) {
     stop = stop_limit;
   }
 
+  fprintf(stderr, "Search settings:\n");
+  fprintf(stderr, "  bit length = %d\n", bitlen);
+  fprintf(stderr, "  num type length = %d\n", num_type_length - 2);
+  fprintf(stderr, 
+          "  (so omit the first (MSB) %d bits from the number representation)\n",
+         ((num_type_length - 2) << 2) - bitlen);
+  fprintf(stderr, "  threshold = %d\n", threshold);
+  fprintf(stderr, "  start = " NUM_TYPE_FORMAT "\n", num_type_length, start);
+  fprintf(stderr, "  stop = " NUM_TYPE_FORMAT "\n", num_type_length, stop);
+  fprintf(stderr, "  stop limit = " NUM_TYPE_FORMAT "\n", num_type_length, stop_limit);
+
   for (i = start; i < stop; ++i) {
-    if (!(i & 0x003fffff)) {
-      fprintf(stderr, "Currently searching at i = %08x\n", i);
+    if (!(i & 0x3fffff)) { // this makes to print status at rate of ~1/sec
+      fprintf(stderr, "Currently searching at i = " NUM_TYPE_FORMAT "\n", num_type_length, i);
     }
     curr = psl(i);
     
     if (curr <= threshold) {
-      printf("%08x\t%d\t", i, curr);
+      printf(NUM_TYPE_FORMAT "\t%d\t", num_type_length, i, curr);
       print_autocorr(i);
       printf("\n");
     }
