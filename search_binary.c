@@ -92,7 +92,7 @@ int psl(num_type val) {
   for (i = 1; i < bitlen; ++i) {
     curr = BIT_SET_COUNT(neg ^ val) - BIT_SET_COUNT(pon ^ val);
     if (curr < 0) {
-      curr *= -1;
+      curr = -curr;
     }
     if (curr > max) {
       max = curr;
