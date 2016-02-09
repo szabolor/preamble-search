@@ -154,7 +154,7 @@ void GMSK_binary(int data, int bit_len, int *bits) {
 void test_form_file(const char *bit_len_str, const char *filename) {
   unsigned long long num;
   FILE *f;
-  int line_count = 0, i;
+  unsigned long long line_count = 0, i;
   int bit_len, phase_len, num_type_length;
   int *bits;
   double *phase;
@@ -176,12 +176,13 @@ void test_form_file(const char *bit_len_str, const char *filename) {
   num_type_length = ((bit_len + 3) >> 2) + 2; 
 
   while (feof(f) == 0) {
+    if (!(line_count & 0xff)) {
+      fprintf(stderr, "Currently searching at line %lld\n", line_count);
+    }
     ++line_count;
     if (fscanf(f, "%llx", &num) == 1) {
 
       GMSK_binary(num, bit_len, bits);
-      
-      // for (i = 0; i< bit_len; ++i) printf("%2d \n", bits[i]);
       
       GMSK_phase(bits, bit_len, phase);
 
@@ -201,7 +202,8 @@ void test_form_file(const char *bit_len_str, const char *filename) {
 }
 
 int main(int argc, char const *argv[]) {
- /*  int data[] = {0xe9, 0x4e, 0x94};
+ /*  
+  int data[] = {0xe9, 0x4e, 0x94};
   const int data_len = 3;
   const int phase_len = ((data_len << 3) + 1) * sample_per_bit;
   const int bit_len = data_len << 3;
