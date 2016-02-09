@@ -107,7 +107,11 @@ void GMSK_phase(const int *bits, const int bits_len, double *phase) {
   double bit_sum = 0.0;
 
   // shift in the first two bits with a zero prepended bit
-    *phase = bits[0] * weight[11] + bits[1] * weight[3];
+    *phase = bits[0] * weight[ 7];
+  *++phase = bits[0] * weight[ 8] + bits[1] * weight[0];
+  *++phase = bits[0] * weight[ 9] + bits[1] * weight[1];
+  *++phase = bits[0] * weight[10] + bits[1] * weight[2];
+  *++phase = bits[0] * weight[11] + bits[1] * weight[3];
   *++phase = bits[0] * weight[12] + bits[1] * weight[4];
   *++phase = bits[0] * weight[13] + bits[1] * weight[5];
   *++phase = bits[0] * weight[14] + bits[1] * weight[6];
@@ -125,6 +129,7 @@ void GMSK_phase(const int *bits, const int bits_len, double *phase) {
     bit_sum += M_PI_2 * bits[i]; // = Pi * 1/2, so c = 1/2 (!)
   }
 
+
   *++phase = bit_sum + bits[i] * weight[15] + bits[i+1] * weight[ 7];
   *++phase = bit_sum + bits[i] * weight[16] + bits[i+1] * weight[ 8];
   *++phase = bit_sum + bits[i] * weight[17] + bits[i+1] * weight[ 9];
@@ -135,10 +140,14 @@ void GMSK_phase(const int *bits, const int bits_len, double *phase) {
   *++phase = bit_sum + bits[i] * weight[22] + bits[i+1] * weight[14];
     
   bit_sum += M_PI_2 * bits[i];
-  *++phase = bit_sum + bits[i] * weight[15];
-  *++phase = bit_sum + bits[i] * weight[16];
-  *++phase = bit_sum + bits[i] * weight[17];
-  *++phase = bit_sum + bits[i] * weight[18];
+  *++phase = bit_sum + bits[i+1] * weight[15];
+  *++phase = bit_sum + bits[i+1] * weight[16];
+  *++phase = bit_sum + bits[i+1] * weight[17];
+  *++phase = bit_sum + bits[i+1] * weight[18];
+  *++phase = bit_sum + bits[i+1] * weight[19];
+  *++phase = bit_sum + bits[i+1] * weight[20];
+  *++phase = bit_sum + bits[i+1] * weight[21];
+  *++phase = bit_sum + bits[i+1] * weight[22];
 }
 
 void GMSK_binary(int data, int bit_len, int *bits) {
@@ -202,11 +211,12 @@ void test_form_file(const char *bit_len_str, const char *filename) {
 }
 
 int main(int argc, char const *argv[]) {
- /*  
-  int data[] = {0xe9, 0x4e, 0x94};
-  const int data_len = 3;
-  const int phase_len = ((data_len << 3) + 1) * sample_per_bit;
-  const int bit_len = data_len << 3;
+
+#if 1 
+
+  const int data = 0x3bf5c961;
+  const int bit_len = 32;
+  const int phase_len = (bit_len + 1) * sample_per_bit;
 
   int *bits;
   double *phase;
@@ -215,9 +225,16 @@ int main(int argc, char const *argv[]) {
   bits = (int *) malloc(bit_len * sizeof(int));
   phase = (double *) malloc(phase_len * sizeof(double));
  
-  GMSK_binary(data, data_len, bits);
+  GMSK_binary(data, bit_len, bits);
 
-  GMSK_phase(bits, data_len << 3, phase);
+  printf("number: %#08x\n", data);
+  printf("Bits:\n[");
+  for (i = 0; i < bit_len; ++i) {
+    printf("%d, ", bits[i]);
+  }
+  printf("]\n");
+
+  GMSK_phase(bits, bit_len, phase);
 
   printf("%d samples written:\n", phase_len);
   printf("[");
@@ -226,13 +243,19 @@ int main(int argc, char const *argv[]) {
   }
   printf("]\n");
 
-  GMSK_autocorr(phase, phase_len);
-*/
+  printf("Autocorrelate:\n");
+  GMSK_autocorr_with_print(phase, phase_len);
+  printf("\n");
+
+#else
+  
   if (argc == 3) {
     test_form_file(argv[1], argv[2]);
   } else {
     fprintf(stderr, "Usage: %s <BIT_LEN> <FILE_PATH>\n", argv[0]);
   }
+
+#endif
 
   return 0;
 }
