@@ -6,7 +6,7 @@
 
 /*
 Compile command on Intel CPU with POPCNT flag (check the flags at `/proc/cpuinfo`):
-  `gcc -o search_binary search_binary.c -Wall -mpopcnt -O3 -march=native -mtune=native -DINTEL_POPCNT`
+  `gcc -o search_binary search_binary.c -Wall -mpopcnt -O3 -march=native -mtune=native -DINTEL_POPCNT -lm -fopenmp`
 Or compile without POPCNT (the runtime will be about 2-3 times longer...):
   `gcc -o search_binary search_binary.c -Wall -O3 -march=native -mtune=native`
 */
@@ -121,22 +121,22 @@ void print_autocorr_and_score(num_type val) {
   num_type pon = val >> 1;
   num_type neg = ((~val) & bitmask) >> 1;
 
-  printf("[%d", bitlen);
+  printf("[%2d", bitlen);
   for (i = 1; i < bitlen; ++i) {
     curr = (int) (BIT_SET_COUNT(neg ^ val)) - (int) BIT_SET_COUNT(pon ^ val);
     sum += curr * curr;
-    printf(", %d", curr);
+    printf(",%2d", curr);
     pon >>= 1;
     neg >>= 1;
   }
-  printf("]\t");
+  printf("]  ");
   // The square sum and its normalized logaritm of the sidelobe
-  printf("%d\t%f", sum, 10.0 * log10((double) sum / (double) (bitlen * bitlen)));
+  printf("%4d %4.4f", sum, 10.0 * log10((double) sum / (double) (bitlen * bitlen)));
 }
 
 int main(int argc, char *argv[]) {
   num_type i, start, stop;
-  int curr, threshold;
+  int threshold;
   char *p;
 
   if (argc != 5) {
@@ -194,14 +194,16 @@ int main(int argc, char *argv[]) {
   fprintf(stderr, "  stop = " NUM_TYPE_FORMAT "\n", num_type_length, stop);
   fprintf(stderr, "  stop limit = " NUM_TYPE_FORMAT "\n", num_type_length, stop_limit);
 
+  #pragma omp parallel for 
   for (i = start; i < stop; ++i) {
-    if (!(i & 0x3fffff)) { // this makes to print status at rate of ~1/sec
-      fprintf(stderr, "Currently searching at i = " NUM_TYPE_FORMAT "\n", num_type_length, i);
-    }
+    int curr;
+//    if (!(i & 0x3fffff)) { // this makes to print status at rate of ~1/sec
+//      fprintf(stderr, "Currently searching at i = " NUM_TYPE_FORMAT "\n", num_type_length, i);
+//    }
     curr = psl(i);
     
     if (curr <= threshold) {
-      printf(NUM_TYPE_FORMAT "\t%d\t", num_type_length, i, curr);
+      printf(NUM_TYPE_FORMAT " %2d ", num_type_length, i, curr);
       print_autocorr_and_score(i);
       printf("\n");
     }
